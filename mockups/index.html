@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ER Visual Designer — UI mockups (choose a direction)</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #e8e8f6; background:
+    radial-gradient(900px 500px at 0% 0%, rgba(124,58,237,.45), transparent 60%),
+    radial-gradient(800px 500px at 100% 10%, rgba(255,61,127,.30), transparent 60%),
+    radial-gradient(800px 600px at 50% 100%, rgba(25,227,193,.22), transparent 60%), #0b0b18; min-height: 100vh; }
+  main { max-width: 1240px; margin: 0 auto; padding: 48px 24px 64px; }
+  h1 { font-size: clamp(28px, 4vw, 42px); margin: 0 0 8px; letter-spacing: -.02em; background: linear-gradient(90deg, #c4b5fd, #ff8ab3, #5cf2d0); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { color: #a7a9c8; max-width: 760px; font-size: 16px; line-height: 1.6; margin: 0 0 12px; }
+  .same { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 36px; }
+  .same span { font-size: 12.5px; padding: 5px 11px; border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); color: #cfd0ea; }
+  .grid { display: grid; gap: 28px; }
+  .card { border-radius: 22px; padding: 22px; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.1); backdrop-filter: blur(12px); display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 26px; align-items: start; }
+  .shots { position: relative; }
+  .shots .desk { width: 100%; border-radius: 14px; display: block; border: 1px solid rgba(255,255,255,.12); box-shadow: 0 30px 60px -30px rgba(0,0,0,.8); }
+  .shots .mob { position: absolute; right: -10px; bottom: -14px; width: 19%; border-radius: 16px; border: 3px solid #0b0b18; box-shadow: 0 20px 40px -14px rgba(0,0,0,.8); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; color: #fff; }
+  .a .tag { background: linear-gradient(135deg, #8b5cf6, #06b6d4); }
+  .b .tag { background: linear-gradient(120deg, #ff7a3d, #ff3d7f, #8a4dff); }
+  .c .tag { background: linear-gradient(120deg, #12e0c4, #b6ff5c); color: #04170f; }
+  h2 { margin: 12px 0 6px; font-size: 24px; letter-spacing: -.01em; }
+  .desc { color: #b9bad6; line-height: 1.6; margin: 0 0 14px; }
+  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: #8d8fb3; margin: 16px 0 6px; }
+  ul { margin: 0; padding-left: 18px; color: #d7d8ee; line-height: 1.6; font-size: 14px; }
+  .open { display: inline-flex; gap: 8px; align-items: center; margin-top: 18px; padding: 11px 18px; border-radius: 12px; font-weight: 700; color: #fff; text-decoration: none; }
+  .a .open { background: linear-gradient(135deg, #8b5cf6, #06b6d4); box-shadow: 0 10px 28px -10px rgba(124,58,237,.8); }
+  .b .open { background: linear-gradient(120deg, #ff7a3d, #ff3d7f, #8a4dff); box-shadow: 0 10px 28px -10px rgba(255,61,127,.8); }
+  .c .open { background: linear-gradient(120deg, #12e0c4, #b6ff5c); color: #04170f; box-shadow: 0 10px 28px -10px rgba(25,227,193,.7); }
+  .more { font-size: 13px; color: #a7a9c8; margin-left: 12px; }
+  .more a { color: #c4b5fd; }
+  .try { margin-top: 40px; padding: 22px; border-radius: 18px; border: 1px dashed rgba(255,255,255,.2); color: #c9cae3; line-height: 1.7; font-size: 14px; }
+  .try b { color: #fff; }
+  @media (max-width: 900px) { .card { grid-template-columns: 1fr; } .shots .mob { width: 26%; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>ER Visual Designer — pick a direction</h1>
+  <p class="lead">Three interactive mockups of the same workspace. Each one is a single HTML file that runs in the browser with no setup. They all share the same behaviour, so you can compare look and layout directly.</p>
+  <div class="same">
+    <span>Palette: drag Table / View / Relationship onto the canvas</span>
+    <span>Explorer with filter</span>
+    <span>Column editor: name, type, size, PK, NN, auto-increment, default</span>
+    <span>Database dropdown: PostgreSQL · MySQL · SQL Server · Oracle · SQLite</span>
+    <span>Problems tab with quick fixes</span>
+    <span>DDL tab: generate, review, copy, download</span>
+    <span>Undo / redo</span>
+    <span>Responsive down to phones</span>
+  </div>
+
+  <div class="grid">
+    <section class="card a">
+      <div class="shots"><img class="desk" src="screenshots/option-a-aurora-glass-desktop.png" alt="Option A desktop"><img class="mob" src="screenshots/option-a-aurora-glass-mobile.png" alt="Option A mobile"></div>
+      <div>
+        <span class="tag">Option A</span>
+        <h2>Aurora Glass</h2>
+        <p class="desc">Dark theme with frosted-glass panels floating over a violet-to-cyan aurora gradient. Table headers carry the gradient, and the editor is docked on the right.</p>
+        <h3>Strengths</h3>
+        <ul><li>Most distinctive and modern look</li><li>Comfortable for long sessions (dark)</li><li>Floating panels make the canvas feel spacious</li></ul>
+        <h3>Trade-offs</h3>
+        <ul><li>Glass blur costs some GPU on older laptops</li><li>Lower contrast than B on projectors and in screenshots</li></ul>
+        <a class="open" href="option-a-aurora-glass.html">Open interactive mockup →</a>
+        <span class="more"><a href="screenshots/option-a-aurora-glass-ddl.png">DDL view</a></span>
+      </div>
+    </section>
+
+    <section class="card b">
+      <div class="shots"><img class="desk" src="screenshots/option-b-sunrise-studio-desktop.png" alt="Option B desktop"><img class="mob" src="screenshots/option-b-sunrise-studio-mobile.png" alt="Option B mobile"></div>
+      <div>
+        <span class="tag">Option B</span>
+        <h2>Sunrise Studio</h2>
+        <p class="desc">Light, docked layout in the style of an IDE, with a coral-magenta-violet gradient across the top bar, table headers and primary actions. The editor is docked on the right.</p>
+        <h3>Strengths</h3>
+        <ul><li>Highest readability and contrast</li><li>Familiar layout (like VS Code or DBeaver)</li><li>Prints and screenshots well for documentation</li></ul>
+        <h3>Trade-offs</h3>
+        <ul><li>Less striking than A or C</li><li>Needs a separate dark mode for users who prefer one</li></ul>
+        <a class="open" href="option-b-sunrise-studio.html">Open interactive mockup →</a>
+        <span class="more"><a href="screenshots/option-b-sunrise-studio-ddl.png">DDL view</a></span>
+      </div>
+    </section>
+
+    <section class="card c">
+      <div class="shots"><img class="desk" src="screenshots/option-c-neon-flow-desktop.png" alt="Option C desktop"><img class="mob" src="screenshots/option-c-neon-flow-mobile.png" alt="Option C mobile"></div>
+      <div>
+        <span class="tag">Option C</span>
+        <h2>Neon Flow</h2>
+        <p class="desc">Compact, dark professional tool with teal-to-lime neon accents and a left icon rail. There is no fixed right panel: the column editor <b>pops out next to the selected table</b>, so you edit where you're looking.</p>
+        <h3>Strengths</h3>
+        <ul><li>Widest canvas, because there's no permanent right panel</li><li>Editing happens right beside the table</li><li>Dense layout suits power users</li></ul>
+        <h3>Trade-offs</h3>
+        <ul><li>The pop-out can cover neighbouring tables (it fades while you link)</li><li>The neon style is the most opinionated of the three</li></ul>
+        <a class="open" href="option-c-neon-flow.html">Open interactive mockup →</a>
+        <span class="more"><a href="screenshots/option-c-neon-flow-ddl.png">DDL view</a></span>
+      </div>
+    </section>
+  </div>
+
+  <div class="try">
+    <b>Things to try in each mockup:</b> drag <b>Table</b> from the palette onto the canvas · drag a table by its header · hover a column and drag its ● dot onto a column in another table to create a foreign key · change a column's type, size or default · switch the database in the top bar (types convert and the rules change) · open <b>Problems</b> and click <b>⚡ quick fix</b> · open <b>DDL</b> and download the .sql file · press <b>Ctrl+Z</b> to undo · narrow the browser window to see the tablet and phone layouts.
+  </div>
+</main>
+</body>
+</html>
