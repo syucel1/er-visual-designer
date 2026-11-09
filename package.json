@@ -1,0 +1,23 @@
+{
+  "name": "er-visual-designer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web-based visual designer for relational database schemas",
+  "license": "Apache-2.0",
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "npm run dev -w @erd/web",
+    "build": "npm run build -w @erd/web",
+    "build:preview": "npm run build:preview -w @erd/web",
+    "preview": "npm run preview -w @erd/web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p packages/model && tsc -p packages/web"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vitest": "^5.1.0"
+  },
+  "engines": { "node": ">=20.19" }
+}
