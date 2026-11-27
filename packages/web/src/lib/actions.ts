@@ -1,9 +1,11 @@
 import { useCallback } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import {
-  addTableCommand, createEmptyProject, createSampleProject, duplicateTableCommand, planConnection,
-  type Endpoint, type Id, type Point,
+  addTableCommand, createEmptyProject, createSampleProject, dispatch as runCommand, duplicateTableCommand, emptyHistory, planConnection,
+  type EngineTarget, type Endpoint, type Id, type Point, type Project,
 } from '@erd/model';
+import { planConversion, targetLabel } from '@erd/dialects';
+import { currentTarget } from './dialect';
 import { useStore } from '../store/store';
 import { autoLayoutCommand } from './autoLayout';
 import { openProjectFile, saveProjectFile } from './fileio';
@@ -21,7 +23,7 @@ export function useActions() {
 
   const addTableAt = useCallback((pos: Point) => {
     const { project, dispatch, select, toast, requestFocus } = useStore.getState();
-    const { command, table } = addTableCommand(project, { x: Math.round(pos.x / 8) * 8, y: Math.round(pos.y / 8) * 8 });
+    const { command, table } = addTableCommand(project, { x: Math.round(pos.x / 8) * 8, y: Math.round(pos.y / 8) * 8 }, undefined, currentTarget().defaults);
     if (dispatch(command)) {
       select({ tables: [table.id] });
       requestFocus(table.id);
@@ -96,24 +98,26 @@ export function useActions() {
     });
   }, []);
 
-  const newProject = useCallback(() => {
-    const { project, openDialog, closeDialog, loadProject } = useStore.getState();
-    const replace = () => { closeDialog(); loadProject(createEmptyProject(), 'Started a new project'); };
-    if (!project.model.tables.length) return replace();
-    openDialog({
-      title: 'Start a new project?',
-      message: `"${project.name}" will be replaced. It is not kept anywhere else unless you saved it as a file.`,
-      actions: [
-        { label: 'Cancel', run: closeDialog },
-        { label: 'Save first', run: () => { saveProjectFile(project); replace(); } },
-        { label: 'Start new', variant: 'danger', run: replace },
-      ],
-    });
+  /** Opens the new-project dialog (name + database engine). */
+  const newProject = useCallback(() => useStore.getState().setNewProjectOpen(true), []);
+
+  /** Creates a new project, or the sample, for the chosen engine (the sample is converted from logical types). */
+  const createProject = useCallback((name: string, target: EngineTarget, sample = false) => {
+    const { loadProject, setNewProjectOpen } = useStore.getState();
+    let p: Project = sample ? { ...createSampleProject(), name: name || 'shop_schema' } : createEmptyProject(name || 'untitled_schema');
+    p = runCommand(p, emptyHistory(), planConversion(p, target).command).project;
+    setNewProjectOpen(false);
+    loadProject(p, `Created ${p.name} for ${currentTargetLabel(p)}`);
   }, []);
 
   const loadSample = useCallback(() => {
     const { project, openDialog, closeDialog, loadProject } = useStore.getState();
-    const load = () => { closeDialog(); loadProject(createSampleProject(), 'Opened the e-commerce sample'); };
+    const load = () => {
+      closeDialog();
+      let sample = createSampleProject();
+      sample = runCommand(sample, emptyHistory(), planConversion(sample, project.target).command).project;
+      loadProject(sample, `Opened the e-commerce sample for ${currentTargetLabel(sample)}`);
+    };
     if (!project.model.tables.length) return load();
     openDialog({
       title: 'Open the sample project?',
@@ -147,5 +151,18 @@ export function useActions() {
     setTimeout(() => useStore.getState().setLinkHint(false), 6000);
   }, []);
 
-  return { addTable, addTableAt, deleteSelection, duplicateSelected, autoLayout, fit, focusTable, connect, newProject, loadSample, openFile, saveFile, showLinkHint, viewCenter };
+  /** Changes the target engine/version: applies directly when nothing changes, otherwise opens the conversion review. */
+  const changeTarget = useCallback((target: EngineTarget) => {
+    const { project, dispatch, toast, setConversion } = useStore.getState();
+    const plan = planConversion(project, target);
+    if (!plan.changes.length && !plan.actionChanges.length) {
+      if (dispatch(plan.command)) toast(`Target is now ${plan.toLabel}`);
+      return;
+    }
+    setConversion(plan);
+  }, []);
+
+  return { changeTarget, createProject, addTable, addTableAt, deleteSelection, duplicateSelected, autoLayout, fit, focusTable, connect, newProject, loadSample, openFile, saveFile, showLinkHint, viewCenter };
 }
+
+const currentTargetLabel = (p: Project) => targetLabel(p.target);

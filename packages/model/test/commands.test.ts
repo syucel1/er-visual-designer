@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addColumnCommand, addTableCommand, createSampleProject, dispatch, duplicateTableCommand, emptyHistory, execute,
-  makeColumn, newRelationship, redo, togglePrimaryKeyCommand, undo, CommandError, type Command, type Project,
+  makeColumn, makeCheck, makeIndex, makeUnique, newRelationship, redo, togglePrimaryKeyCommand, undo, CommandError, type Command, type Project,
 } from '../src';
 
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -98,6 +98,30 @@ describe('commands (apply + undo + redo)', () => {
     expect(table.columns.every((c) => !orders.columns.some((o) => o.id === c.id))).toBe(true);
     expect(table.primaryKey!.columnIds[0]).toBe(table.columns[0]!.id);
     expect(next.model.tables).toHaveLength(5);
+  });
+
+  it('setTarget changes the engine', () => {
+    expect(roundTrip(p, { type: 'setTarget', target: { engine: 'mysql', version: '8.4' } }).target).toEqual({ engine: 'mysql', version: '8.4' });
+  });
+
+  it('unique / check / index items: add, update, remove', () => {
+    const email = colId(p, 'orders', 'status');
+    const u = makeUnique([email]);
+    let next = roundTrip(p, { type: 'addTableItem', tableId: orders.id, kind: 'uniques', item: u });
+    expect(tableByName(next, 'orders').uniques).toEqual([u]);
+    const k = makeCheck('total >= 0');
+    next = roundTrip(next, { type: 'addTableItem', tableId: orders.id, kind: 'checks', item: k });
+    next = roundTrip(next, { type: 'updateTableItem', tableId: orders.id, kind: 'checks', itemId: k.id, patch: { expression: 'total > 0', name: 'ck_total' } });
+    expect(tableByName(next, 'orders').checks![0]).toMatchObject({ expression: 'total > 0', name: 'ck_total' });
+    const i = makeIndex([colId(p, 'orders', 'customer_id'), colId(p, 'orders', 'placed_at')]);
+    next = roundTrip(next, { type: 'addTableItem', tableId: orders.id, kind: 'indexes', item: i });
+    next = roundTrip(next, { type: 'removeTableItem', tableId: orders.id, kind: 'checks', itemId: k.id });
+    expect(tableByName(next, 'orders').checks).toBeUndefined();
+    expect(() => execute(p, { type: 'addTableItem', tableId: orders.id, kind: 'indexes', item: makeIndex(['nope']) })).toThrow(CommandError);
+    // Removing a column strips it from indexes / uniques and drops ones left empty.
+    next = roundTrip(next, { type: 'removeColumn', tableId: orders.id, columnId: email });
+    expect(tableByName(next, 'orders').uniques).toBeUndefined();
+    expect(tableByName(next, 'orders').indexes![0]!.columnIds).toHaveLength(2);
   });
 
   it('rejects invalid commands without changing the project', () => {

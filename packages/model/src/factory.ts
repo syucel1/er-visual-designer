@@ -2,17 +2,26 @@ import { defaultDataType, sameType, formatType } from './logicalTypes';
 import { newId } from './ids';
 import { fkColumnName, uniqueName } from './naming';
 import type { Command } from './commands';
-import type { Column, Id, LogicalTypeName, Point, Project, Relationship, Table } from './types';
+import type { CheckConstraint, Column, DataType, Id, Index, LogicalTypeName, Point, Project, Relationship, Table, UniqueConstraint } from './types';
 
 /* ---------------- Element factories ---------------- */
 
-export function makeColumn(name: string, type: LogicalTypeName = 'varchar', extra: Partial<Column> = {}): Column {
-  return { id: newId('c'), name, type: defaultDataType(type), nullable: true, ...extra };
+/** `type` is a logical type name (generic engine) or a ready-made engine DataType. */
+export function makeColumn(name: string, type: LogicalTypeName | DataType = 'varchar', extra: Partial<Column> = {}): Column {
+  return { id: newId('c'), name, type: typeof type === 'string' ? defaultDataType(type) : structuredClone(type), nullable: true, ...extra };
 }
 
-/** A new table with an `id bigint` identity primary key. */
-export function makeTable(project: Project, name?: string): Table {
-  const idCol = makeColumn('id', 'bigint', { nullable: false, identity: true });
+/** Engine-specific defaults for new elements (supplied by the dialect in the UI). */
+export interface TypeDefaults {
+  /** Type of the `id` column of new tables (e.g. bigint / NUMBER(19)). */
+  idType?: DataType;
+  /** Type of newly added columns (e.g. varchar(255) / NVARCHAR(255)). */
+  columnType?: DataType;
+}
+
+/** A new table with an `id` identity primary key. */
+export function makeTable(project: Project, name?: string, defaults: TypeDefaults = {}): Table {
+  const idCol = makeColumn('id', defaults.idType ?? 'bigint', { nullable: false, identity: true });
   return {
     id: newId('t'),
     name: name ?? uniqueName('table', project.model.tables.map((t) => t.name)),
@@ -21,16 +30,20 @@ export function makeTable(project: Project, name?: string): Table {
   };
 }
 
+export const makeUnique = (columnIds: Id[]): UniqueConstraint => ({ id: newId('u'), columnIds });
+export const makeCheck = (expression = ''): CheckConstraint => ({ id: newId('k'), expression });
+export const makeIndex = (columnIds: Id[], unique = false): Index => ({ id: newId('i'), columnIds, ...(unique ? { unique: true } : {}) });
+
 /* ---------------- Higher-level operations (return commands) ---------------- */
 
-export function addTableCommand(project: Project, position: Point, name?: string): { command: Command; table: Table } {
-  const table = makeTable(project, name);
+export function addTableCommand(project: Project, position: Point, name?: string, defaults: TypeDefaults = {}): { command: Command; table: Table } {
+  const table = makeTable(project, name, defaults);
   return { command: { type: 'addTable', table, position }, table };
 }
 
-export function addColumnCommand(project: Project, tableId: Id, index?: number): { command: Command; column: Column } {
+export function addColumnCommand(project: Project, tableId: Id, index?: number, defaults: TypeDefaults = {}): { command: Command; column: Column } {
   const t = mustTable(project, tableId);
-  const column = makeColumn(uniqueName('column', t.columns.map((c) => c.name)), 'varchar');
+  const column = makeColumn(uniqueName('column', t.columns.map((c) => c.name)), defaults.columnType ?? 'varchar');
   return { command: { type: 'addColumn', tableId, column, index }, column };
 }
 
@@ -45,7 +58,11 @@ export function duplicateTableCommand(project: Project, tableId: Id): { command:
     name: uniqueName(`${src.name}_copy`, project.model.tables.map((t) => t.name)),
     columns,
     primaryKey: src.primaryKey ? { ...src.primaryKey, name: undefined, columnIds: src.primaryKey.columnIds.map((id) => idMap.get(id)!) } : undefined,
+    uniques: src.uniques?.map((u) => ({ id: newId('u'), columnIds: u.columnIds.map((id) => idMap.get(id)!) })),
+    checks: src.checks?.map((k) => ({ id: newId('k'), expression: k.expression })),
+    indexes: src.indexes?.map((i) => ({ id: newId('i'), columnIds: i.columnIds.map((id) => idMap.get(id)!), ...(i.unique ? { unique: true } : {}) })),
   };
+  for (const k of ['uniques', 'checks', 'indexes'] as const) if (!table[k]) delete table[k];
   if (!table.primaryKey) delete table.primaryKey;
   if (table.primaryKey && table.primaryKey.name === undefined) delete table.primaryKey.name;
   const pos = project.layout.positions[tableId] ?? { x: 0, y: 0 };
@@ -122,7 +139,7 @@ export function planConnection(project: Project, from: Endpoint, to: Endpoint): 
     const newCols: Column[] = pkCols.map((pc) => {
       const name = fkColumnName(a, pc.name, { ...b, columns: names.map((n) => ({ name: n }) as Column) });
       names.push(name);
-      return makeColumn(name, pc.type.name, { type: structuredClone(pc.type), nullable: selfRef });
+      return makeColumn(name, pc.type, { nullable: selfRef });
     });
     const rel = newRelationship(b.id, a.id, newCols.map((nc, i) => ({ child: nc.id, parent: pkCols[i]!.id })));
     const command: Command = { type: 'batch', label: 'Create relationship', commands: [...newCols.map((column) => ({ type: 'addColumn', tableId: b.id, column }) as Command), { type: 'createRelationship', relationship: rel }] };

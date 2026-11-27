@@ -6,7 +6,7 @@
 
 export type Id = string;
 
-/** Logical (engine-neutral) data types used in Phase 1. Engine-specific types arrive in Phase 2. */
+/** Logical (engine-neutral) data types. Every engine type maps to one of these, which makes engine conversion deterministic (design §5.3). */
 export type LogicalTypeName =
   | 'smallint' | 'integer' | 'bigint' | 'decimal' | 'real' | 'double'
   | 'boolean'
@@ -14,13 +14,22 @@ export type LogicalTypeName =
   | 'date' | 'time' | 'timestamp' | 'timestamptz'
   | 'uuid' | 'json' | 'binary';
 
+/**
+ * A column's physical type in the project's target engine (e.g. `varchar(255)`, `NVARCHAR(MAX)`, `NUMBER(10,0)`).
+ * For the `generic` engine the physical name is the logical name.
+ */
 export interface DataType {
-  name: LogicalTypeName;
-  /** Length for varchar/char. */
+  /** Physical type name as the engine spells it (`bigint`, `VARCHAR2`, `TIMESTAMP WITH TIME ZONE`…). */
+  name: string;
+  /** Length for character / binary types. */
   length?: number;
-  /** Precision and scale for decimal. */
+  /** `true` for SQL Server `(MAX)` lengths. */
+  max?: boolean;
+  /** Precision and scale for exact numerics. */
   precision?: number;
   scale?: number;
+  /** Engine-neutral equivalent, kept so the model can be converted between engines. */
+  logical?: LogicalTypeName;
 }
 
 export interface DefaultValue {
@@ -45,6 +54,29 @@ export interface PrimaryKey {
   columnIds: Id[];
 }
 
+export interface UniqueConstraint {
+  id: Id;
+  name?: string;
+  columnIds: Id[];
+}
+
+export interface CheckConstraint {
+  id: Id;
+  name?: string;
+  /** SQL boolean expression, e.g. `quantity > 0`. */
+  expression: string;
+}
+
+export interface Index {
+  id: Id;
+  name?: string;
+  columnIds: Id[];
+  unique?: boolean;
+}
+
+/** Keys of the per-table constraint/index lists, used by the generic table-item commands. */
+export type TableItemKind = 'uniques' | 'checks' | 'indexes';
+
 export interface Table {
   id: Id;
   name: string;
@@ -54,6 +86,9 @@ export interface Table {
   color?: TableColor;
   columns: Column[];
   primaryKey?: PrimaryKey;
+  uniques?: UniqueConstraint[];
+  checks?: CheckConstraint[];
+  indexes?: Index[];
 }
 
 export type RefAction = 'no_action' | 'restrict' | 'cascade' | 'set_null' | 'set_default';
@@ -94,9 +129,12 @@ export interface Layout {
   viewport?: Viewport;
 }
 
+export type EngineId = 'generic' | 'postgresql' | 'mysql' | 'sqlserver' | 'oracle' | 'sqlite';
+export const ENGINE_IDS: EngineId[] = ['generic', 'postgresql', 'mysql', 'sqlserver', 'oracle', 'sqlite'];
+
 export interface EngineTarget {
-  /** `generic` in Phase 1 (logical types only). */
-  engine: 'generic' | 'postgresql' | 'mysql' | 'sqlserver' | 'oracle' | 'sqlite';
+  /** `generic` uses logical types only; the others are engine dialects (Phase 2). */
+  engine: EngineId;
   version?: string;
 }
 

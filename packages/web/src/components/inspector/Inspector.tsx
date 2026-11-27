@@ -6,7 +6,12 @@ import {
 import { useStore } from '../../store/store';
 import { useActions } from '../../lib/actions';
 import { ColumnCard } from './ColumnCard';
+import { ConstraintsEditor } from './ConstraintsEditor';
+import { InlineIssues } from '../EngineUi';
+import { currentTarget, useTarget } from '../../lib/dialect';
+import type { Issue } from '@erd/validation';
 
+const NO_ISSUES: Issue[] = [];
 const SWATCH: Record<string, string> = { sunrise: 'linear-gradient(120deg,#c2410c,#be123c)', violet: 'linear-gradient(120deg,#6d3ff0,#4f46e5)', blue: 'linear-gradient(120deg,#1d4ed8,#0369a1)', teal: 'linear-gradient(120deg,#0f766e,#0e7490)', green: 'linear-gradient(120deg,#047857,#15803d)', amber: 'linear-gradient(120deg,#b45309,#a16207)', slate: 'linear-gradient(120deg,#334155,#475569)' };
 
 export function Inspector() {
@@ -48,6 +53,10 @@ function TableEditor({ table, project, focusColumn }: { table: Table; project: P
   const focusRequest = useStore((s) => s.focusRequest);
   const pk = new Set(table.primaryKey?.columnIds ?? []);
   const rels = project.model.relationships.filter((r) => r.childTableId === table.id || r.parentTableId === table.id);
+  const tableIssues = useStore((s) => s.validation.byTable.get(table.id)) ?? NO_ISSUES;
+  const colIssues = (id: Id) => tableIssues.filter((i) => i.target.kind === 'column' && i.target.columnId === id);
+  const ownIssues = tableIssues.filter((i) => i.target.kind === 'table');
+  const itemIssues = tableIssues.filter((i) => i.target.kind === 'item');
   const fk = new Set(project.model.relationships.filter((r) => r.childTableId === table.id).flatMap((r) => r.columns.map((p) => p.child)));
   const upd = (patch: Partial<Table>, field?: string) => useStore.getState().dispatch({ type: 'updateTable', tableId: table.id, patch }, field ? { coalesceKey: `table:${table.id}:${field}` } : undefined);
 
@@ -62,7 +71,7 @@ function TableEditor({ table, project, focusColumn }: { table: Table; project: P
 
   const addColumn = () => {
     const s = useStore.getState();
-    const { command, column } = addColumnCommand(s.project, table.id);
+    const { command, column } = addColumnCommand(s.project, table.id, undefined, currentTarget().defaults);
     if (s.dispatch(command)) {
       s.select({ tables: [table.id], focusColumn: column.id });
       setTimeout(() => { const el = document.querySelector<HTMLInputElement>(`[data-col="${column.id}"] input`); el?.focus(); el?.select(); }, 40);
@@ -75,6 +84,7 @@ function TableEditor({ table, project, focusColumn }: { table: Table; project: P
         <input ref={titleRef} className="w-full text-[17px] font-bold border border-transparent hover:border-line focus:border-brand-2 focus:outline-none rounded-md px-1 -ml-1.5 bg-transparent" value={table.name} aria-label="Table name"
           onChange={(e) => upd({ name: e.target.value }, 'name')} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
       </Head>
+      {ownIssues.length > 0 && <div className="px-3.5 pt-3"><InlineIssues issues={ownIssues} /></div>}
       <div className="grid grid-cols-[1fr_auto] gap-3 px-3.5 pt-3 items-end">
         <label className="grid gap-1 text-[11.5px] text-muted">Schema <input className="input text-ink" placeholder="(default)" value={table.schema ?? ''} onChange={(e) => upd({ schema: e.target.value || undefined }, 'schema')} /></label>
         <div className="grid gap-1 text-[11.5px] text-muted">Colour
@@ -84,12 +94,13 @@ function TableEditor({ table, project, focusColumn }: { table: Table; project: P
         </div>
       </div>
       <SectionTitle right={<span className="normal-case tracking-normal font-medium">{table.columns.length}</span>}>Columns</SectionTitle>
-      <div className="grid gap-2 px-3.5">
+      <div className="grid grid-cols-1 gap-2 px-3.5">
         {table.columns.map((c, i) => (
-          <ColumnCard key={c.id} tableId={table.id} column={c} index={i} count={table.columns.length} isPk={pk.has(c.id)} isFk={fk.has(c.id)} focused={focusColumn === c.id} />
+          <ColumnCard key={c.id} tableId={table.id} column={c} index={i} count={table.columns.length} isPk={pk.has(c.id)} isFk={fk.has(c.id)} focused={focusColumn === c.id} issues={colIssues(c.id)} />
         ))}
       </div>
       <div className="px-3.5 mt-2"><button className="btn w-full justify-center border-dashed" onClick={addColumn} data-testid="add-column">＋ Add column</button></div>
+      <ConstraintsEditor table={table} issues={itemIssues} />
       <SectionTitle>Relationships</SectionTitle>
       <div className="grid gap-1.5 px-3.5">
         {rels.map((r) => <RelItem key={r.id} r={r} project={project} />)}
@@ -128,6 +139,8 @@ function RelationshipEditor({ rel, project }: { rel: Relationship; project: Proj
   const setPair = (i: number, side: 'child' | 'parent', id: Id) => upd({ columns: rel.columns.map((p, j) => (j === i ? { ...p, [side]: id } : p)) });
   const usedChild = new Set(rel.columns.map((p) => p.child)), usedParent = new Set(rel.columns.map((p) => p.parent));
   const freeChild = child.columns.find((c) => !usedChild.has(c.id)), freeParent = parent.columns.find((c) => !usedParent.has(c.id));
+  const { dialect, label: engineLabel } = useTarget();
+  const relIssues = useStore((st) => st.validation.issues).filter((i) => i.target.relationshipId === rel.id);
 
   return (
     <div data-testid="relationship-editor">
@@ -135,6 +148,7 @@ function RelationshipEditor({ rel, project }: { rel: Relationship; project: Proj
         <input className="w-full text-[14px] font-semibold mono border border-transparent hover:border-line focus:border-brand-2 focus:outline-none rounded-md px-1 -ml-1.5 bg-transparent" placeholder={relationshipDisplayName({ ...rel, name: undefined }, project.model)}
           value={rel.name ?? ''} aria-label="Relationship name" onChange={(e) => upd({ name: e.target.value || undefined }, 'name')} />
       </Head>
+      {relIssues.length > 0 && <div className="px-3.5 pt-3"><InlineIssues issues={relIssues} /></div>}
       <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center m-3.5">
         <button className="text-left p-2.5 rounded-xl border border-line bg-[#fbfbfe] hover:border-brand-2" onClick={() => { s().select({ tables: [child.id] }); a.focusTable(child.id); }}>
           <small className="block text-muted text-[10.5px]">Child ({card.oneToOne ? 'one' : 'many'})</small><b>{child.name}</b>
@@ -168,7 +182,10 @@ function RelationshipEditor({ rel, project }: { rel: Relationship; project: Proj
         {(['onDelete', 'onUpdate'] as const).map((k) => (
           <label key={k} className="grid gap-1 text-[11.5px] text-muted">{k === 'onDelete' ? 'On delete' : 'On update'}
             <select className="input text-ink" value={rel[k]} onChange={(e) => upd({ [k]: e.target.value as RefAction })}>
-              {REF_ACTIONS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+              {REF_ACTIONS.map((x) => {
+                const ok = (k === 'onDelete' ? dialect.capabilities.onDelete : dialect.capabilities.onUpdate).includes(x.value);
+                return <option key={x.value} value={x.value} disabled={!ok && rel[k] !== x.value}>{x.label}{ok ? '' : ` (not in ${engineLabel})`}</option>;
+              })}
             </select>
           </label>
         ))}

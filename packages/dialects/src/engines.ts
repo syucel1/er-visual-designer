@@ -1,0 +1,315 @@
+import { LOGICAL_TYPES, type DataType, type LogicalTypeName, type RefAction } from '@erd/model';
+import { carry, len, typeNamed, versionAtLeast } from './helpers';
+import { COMMON_RESERVED, MYSQL_RESERVED, ORACLE_RESERVED, POSTGRES_RESERVED, SQLITE_RESERVED, SQLSERVER_RESERVED } from './reserved';
+import type { Dialect, TypeDescriptor, TypeMapping } from './types';
+
+const ALL_ACTIONS: RefAction[] = ['no_action', 'restrict', 'cascade', 'set_null', 'set_default'];
+const dq = (n: string) => `"${n.replace(/"/g, '""')}"`;
+
+type Rule = { name: string; lossy?: string } | ((src: DataType | undefined, version: string | undefined) => { name: string; lossy?: string });
+
+/** Builds mapLogical from a table of logical → target type (optionally version-dependent). */
+function mapper(types: () => TypeDescriptor[], rules: Record<LogicalTypeName, Rule>) {
+  return (logical: LogicalTypeName, src: DataType | undefined, version: string | undefined): TypeMapping => {
+    const r = rules[logical];
+    const { name, lossy } = typeof r === 'function' ? r(src, version) : r;
+    return carry(typeNamed(types(), name), src, lossy);
+  };
+}
+
+/** Reverse mapping from the descriptor's logical type. */
+function byDescriptor(types: () => TypeDescriptor[]) {
+  return (t: DataType): LogicalTypeName => {
+    const n = t.name.toLowerCase();
+    const d = types().find((x) => x.name.toLowerCase() === n || x.aliases?.some((a) => a.toLowerCase() === n));
+    return d?.logical ?? t.logical ?? 'text';
+  };
+}
+
+/* ======================= Generic (logical types, Phase 1) ======================= */
+
+const genericTypes: TypeDescriptor[] = LOGICAL_TYPES.map((t) => ({
+  name: t.name,
+  category: t.category === 'Other' && t.name === 'binary' ? 'Binary' : t.category,
+  logical: t.name,
+  ...(t.param === 'length' ? { length: len(1, t.maxLength ?? 65535, t.defaultLength) } : {}),
+  ...(t.param === 'precision' ? { precision: len(1, 1000, t.defaultPrecision), scale: len(0, 1000, t.defaultScale) } : {}),
+}));
+
+export const generic: Dialect = {
+  id: 'generic',
+  displayName: 'Generic (logical types)',
+  versions: [],
+  identifiers: { maxLength: null, unit: 'chars', caseFolding: 'none', quote: dq, reservedWords: COMMON_RESERVED },
+  types: genericTypes,
+  capabilities: { identitySyntax: 'identity', singleIdentity: false, identityMustBeKey: false, identityRowidOnly: false, checkConstraints: true, schemas: true, alterAddForeignKey: true, onDelete: ALL_ACTIONS, onUpdate: ALL_ACTIONS },
+  mapLogical: (logical, src) => carry(typeNamed(genericTypes, logical), src),
+  toLogical: (t) => (LOGICAL_TYPES.some((x) => x.name === t.name) ? (t.name as LogicalTypeName) : t.logical ?? 'text'),
+};
+
+/* ======================= PostgreSQL ======================= */
+
+const pgTypes: TypeDescriptor[] = [
+  { name: 'smallint', category: 'Numeric', logical: 'smallint', aliases: ['int2'] },
+  { name: 'integer', category: 'Numeric', logical: 'integer', aliases: ['int', 'int4'] },
+  { name: 'bigint', category: 'Numeric', logical: 'bigint', aliases: ['int8'] },
+  { name: 'numeric', category: 'Numeric', logical: 'decimal', precision: len(1, 1000, 12), scale: len(0, 1000, 2), aliases: ['decimal'] },
+  { name: 'real', category: 'Numeric', logical: 'real', aliases: ['float4'] },
+  { name: 'double precision', category: 'Numeric', logical: 'double', aliases: ['float8', 'double', 'float'] },
+  { name: 'boolean', category: 'Boolean', logical: 'boolean', aliases: ['bool'] },
+  { name: 'varchar', category: 'Text', logical: 'varchar', length: len(1, 10485760, 255), aliases: ['character varying'] },
+  { name: 'char', category: 'Text', logical: 'char', length: len(1, 10485760, 1), aliases: ['character', 'bpchar'] },
+  { name: 'text', category: 'Text', logical: 'text' },
+  { name: 'date', category: 'Date & time', logical: 'date' },
+  { name: 'time', category: 'Date & time', logical: 'time', aliases: ['time without time zone'] },
+  { name: 'timestamp', category: 'Date & time', logical: 'timestamp', aliases: ['timestamp without time zone'] },
+  { name: 'timestamptz', category: 'Date & time', logical: 'timestamptz', aliases: ['timestamp with time zone'] },
+  { name: 'interval', category: 'Date & time', logical: 'text', note: 'time span' },
+  { name: 'uuid', category: 'Other', logical: 'uuid' },
+  { name: 'jsonb', category: 'Other', logical: 'json', note: 'binary JSON (indexable)' },
+  { name: 'json', category: 'Other', logical: 'json', note: 'JSON text' },
+  { name: 'bytea', category: 'Binary', logical: 'binary' },
+  { name: 'inet', category: 'Other', logical: 'varchar', note: 'IP address' },
+];
+
+export const postgresql: Dialect = {
+  id: 'postgresql',
+  displayName: 'PostgreSQL',
+  versions: ['13', '14', '15', '16', '17'],
+  defaultVersion: '16',
+  identifiers: { maxLength: 63, unit: 'bytes', caseFolding: 'lower', quote: dq, reservedWords: POSTGRES_RESERVED },
+  types: pgTypes,
+  capabilities: { identitySyntax: 'GENERATED BY DEFAULT AS IDENTITY', singleIdentity: false, identityMustBeKey: false, identityRowidOnly: false, checkConstraints: true, schemas: true, alterAddForeignKey: true, onDelete: ALL_ACTIONS, onUpdate: ALL_ACTIONS },
+  mapLogical: mapper(() => pgTypes, {
+    smallint: { name: 'smallint' }, integer: { name: 'integer' }, bigint: { name: 'bigint' }, decimal: { name: 'numeric' },
+    real: { name: 'real' }, double: { name: 'double precision' }, boolean: { name: 'boolean' },
+    varchar: { name: 'varchar' }, char: { name: 'char' }, text: { name: 'text' },
+    date: { name: 'date' }, time: { name: 'time' }, timestamp: { name: 'timestamp' }, timestamptz: { name: 'timestamptz' },
+    uuid: { name: 'uuid' }, json: { name: 'jsonb' }, binary: { name: 'bytea' },
+  }),
+  toLogical: byDescriptor(() => pgTypes),
+};
+
+/* ======================= MySQL ======================= */
+
+const myTypes: TypeDescriptor[] = [
+  { name: 'TINYINT', category: 'Numeric', logical: 'smallint', note: '1 byte' },
+  { name: 'SMALLINT', category: 'Numeric', logical: 'smallint' },
+  { name: 'MEDIUMINT', category: 'Numeric', logical: 'integer', note: '3 bytes' },
+  { name: 'INT', category: 'Numeric', logical: 'integer', aliases: ['INTEGER'] },
+  { name: 'BIGINT', category: 'Numeric', logical: 'bigint' },
+  { name: 'DECIMAL', category: 'Numeric', logical: 'decimal', precision: len(1, 65, 10), scale: len(0, 30, 2), aliases: ['NUMERIC', 'DEC'] },
+  { name: 'FLOAT', category: 'Numeric', logical: 'real' },
+  { name: 'DOUBLE', category: 'Numeric', logical: 'double', aliases: ['DOUBLE PRECISION', 'REAL'] },
+  { name: 'BOOLEAN', category: 'Boolean', logical: 'boolean', aliases: ['BOOL'], note: 'stored as TINYINT(1)' },
+  { name: 'CHAR', category: 'Text', logical: 'char', length: len(0, 255, 1) },
+  { name: 'VARCHAR', category: 'Text', logical: 'varchar', length: len(1, 65535, 255, { required: true }) },
+  { name: 'TINYTEXT', category: 'Text', logical: 'text', noLiteralDefault: true, note: '255 bytes' },
+  { name: 'TEXT', category: 'Text', logical: 'text', noLiteralDefault: true, note: '64 KB' },
+  { name: 'MEDIUMTEXT', category: 'Text', logical: 'text', noLiteralDefault: true, note: '16 MB' },
+  { name: 'LONGTEXT', category: 'Text', logical: 'text', noLiteralDefault: true, note: '4 GB' },
+  { name: 'DATE', category: 'Date & time', logical: 'date' },
+  { name: 'TIME', category: 'Date & time', logical: 'time' },
+  { name: 'DATETIME', category: 'Date & time', logical: 'timestamp' },
+  { name: 'TIMESTAMP', category: 'Date & time', logical: 'timestamptz', note: 'UTC, 1970–2038' },
+  { name: 'YEAR', category: 'Date & time', logical: 'smallint' },
+  { name: 'JSON', category: 'Other', logical: 'json', noLiteralDefault: true },
+  { name: 'BINARY', category: 'Binary', logical: 'binary', length: len(1, 255, 16) },
+  { name: 'VARBINARY', category: 'Binary', logical: 'binary', length: len(1, 65535, 255, { required: true }) },
+  { name: 'BLOB', category: 'Binary', logical: 'binary', noLiteralDefault: true, note: '64 KB' },
+  { name: 'LONGBLOB', category: 'Binary', logical: 'binary', noLiteralDefault: true, note: '4 GB' },
+];
+
+export const mysql: Dialect = {
+  id: 'mysql',
+  displayName: 'MySQL',
+  versions: ['8.0', '8.4'],
+  defaultVersion: '8.4',
+  identifiers: { maxLength: 64, unit: 'chars', caseFolding: 'none', quote: (n) => `\`${n.replace(/`/g, '``')}\``, reservedWords: MYSQL_RESERVED },
+  types: myTypes,
+  // InnoDB parses SET DEFAULT but rejects it.
+  capabilities: { identitySyntax: 'AUTO_INCREMENT', singleIdentity: true, identityMustBeKey: true, identityRowidOnly: false, checkConstraints: true, schemas: false, alterAddForeignKey: true, onDelete: ['no_action', 'restrict', 'cascade', 'set_null'], onUpdate: ['no_action', 'restrict', 'cascade', 'set_null'] },
+  mapLogical: mapper(() => myTypes, {
+    smallint: { name: 'SMALLINT' }, integer: { name: 'INT' }, bigint: { name: 'BIGINT' }, decimal: { name: 'DECIMAL' },
+    real: { name: 'FLOAT' }, double: { name: 'DOUBLE' }, boolean: { name: 'BOOLEAN' },
+    varchar: { name: 'VARCHAR' }, char: { name: 'CHAR' }, text: { name: 'LONGTEXT' },
+    date: { name: 'DATE' }, time: { name: 'TIME' }, timestamp: { name: 'DATETIME' },
+    timestamptz: { name: 'TIMESTAMP', lossy: 'MySQL TIMESTAMP stores UTC without the offset and only covers 1970–2038' },
+    uuid: { name: 'BINARY', lossy: 'no UUID type; stored as BINARY(16)' }, json: { name: 'JSON' }, binary: { name: 'LONGBLOB' },
+  }),
+  toLogical: byDescriptor(() => myTypes),
+};
+
+/* ======================= SQL Server ======================= */
+
+const msTypes: TypeDescriptor[] = [
+  { name: 'TINYINT', category: 'Numeric', logical: 'smallint', note: '0–255' },
+  { name: 'SMALLINT', category: 'Numeric', logical: 'smallint' },
+  { name: 'INT', category: 'Numeric', logical: 'integer', aliases: ['INTEGER'] },
+  { name: 'BIGINT', category: 'Numeric', logical: 'bigint' },
+  { name: 'DECIMAL', category: 'Numeric', logical: 'decimal', precision: len(1, 38, 18), scale: len(0, 38, 2), aliases: ['NUMERIC', 'DEC'] },
+  { name: 'MONEY', category: 'Numeric', logical: 'decimal' },
+  { name: 'REAL', category: 'Numeric', logical: 'real' },
+  { name: 'FLOAT', category: 'Numeric', logical: 'double', aliases: ['DOUBLE PRECISION'] },
+  { name: 'BIT', category: 'Boolean', logical: 'boolean' },
+  { name: 'CHAR', category: 'Text', logical: 'char', length: len(1, 8000, 1) },
+  { name: 'VARCHAR', category: 'Text', logical: 'varchar', length: len(1, 8000, 255, { required: true, allowMax: true }), note: 'non-Unicode' },
+  { name: 'NCHAR', category: 'Text', logical: 'char', length: len(1, 4000, 1) },
+  { name: 'NVARCHAR', category: 'Text', logical: 'varchar', length: len(1, 4000, 255, { required: true, allowMax: true }), note: 'Unicode' },
+  { name: 'DATE', category: 'Date & time', logical: 'date' },
+  { name: 'TIME', category: 'Date & time', logical: 'time' },
+  { name: 'DATETIME2', category: 'Date & time', logical: 'timestamp' },
+  { name: 'DATETIMEOFFSET', category: 'Date & time', logical: 'timestamptz' },
+  { name: 'DATETIME', category: 'Date & time', logical: 'timestamp', note: 'legacy; prefer DATETIME2' },
+  { name: 'UNIQUEIDENTIFIER', category: 'Other', logical: 'uuid' },
+  { name: 'XML', category: 'Other', logical: 'text' },
+  { name: 'BINARY', category: 'Binary', logical: 'binary', length: len(1, 8000, 16) },
+  { name: 'VARBINARY', category: 'Binary', logical: 'binary', length: len(1, 8000, 255, { required: true, allowMax: true }) },
+];
+
+export const sqlserver: Dialect = {
+  id: 'sqlserver',
+  displayName: 'SQL Server',
+  versions: ['2019', '2022'],
+  defaultVersion: '2022',
+  identifiers: { maxLength: 128, unit: 'chars', caseFolding: 'none', quote: (n) => `[${n.replace(/]/g, ']]')}]`, reservedWords: SQLSERVER_RESERVED },
+  types: msTypes,
+  capabilities: { identitySyntax: 'IDENTITY(1,1)', singleIdentity: true, identityMustBeKey: false, identityRowidOnly: false, checkConstraints: true, schemas: true, alterAddForeignKey: true, onDelete: ['no_action', 'cascade', 'set_null', 'set_default'], onUpdate: ['no_action', 'cascade', 'set_null', 'set_default'] },
+  mapLogical: mapper(() => msTypes, {
+    smallint: { name: 'SMALLINT' }, integer: { name: 'INT' }, bigint: { name: 'BIGINT' }, decimal: { name: 'DECIMAL' },
+    real: { name: 'REAL' }, double: { name: 'FLOAT' }, boolean: { name: 'BIT' },
+    varchar: { name: 'NVARCHAR' }, char: { name: 'NCHAR' }, text: { name: 'NVARCHAR' },
+    date: { name: 'DATE' }, time: { name: 'TIME' }, timestamp: { name: 'DATETIME2' }, timestamptz: { name: 'DATETIMEOFFSET' },
+    uuid: { name: 'UNIQUEIDENTIFIER' }, json: { name: 'NVARCHAR', lossy: 'no native JSON type in SQL Server 2019/2022; stored as NVARCHAR(MAX)' },
+    binary: { name: 'VARBINARY' },
+  }),
+  toLogical: (t) => (t.max && /^n?varchar$/i.test(t.name) ? 'text' : byDescriptor(() => msTypes)(t)),
+};
+// text / json / binary map to (N)VAR…(MAX): wrap the mapper so those get max = true.
+{
+  const base = sqlserver.mapLogical;
+  sqlserver.mapLogical = (logical, src, version) => {
+    const m = base(logical, logical === 'text' || logical === 'json' || logical === 'binary' ? { ...(src ?? { name: '' }), max: true } : src, version);
+    if (logical === 'text' || logical === 'json' || logical === 'binary') { delete m.type.length; m.type.max = true; }
+    return m;
+  };
+}
+
+/* ======================= Oracle ======================= */
+
+const oraTypes: TypeDescriptor[] = [
+  { name: 'NUMBER', category: 'Numeric', logical: 'decimal', precision: len(1, 38, 10), scale: len(-84, 127, 0), aliases: ['DECIMAL', 'NUMERIC', 'INTEGER', 'INT', 'SMALLINT'], note: 'NUMBER(p,0) for integers' },
+  { name: 'BINARY_FLOAT', category: 'Numeric', logical: 'real' },
+  { name: 'BINARY_DOUBLE', category: 'Numeric', logical: 'double' },
+  { name: 'FLOAT', category: 'Numeric', logical: 'double' },
+  { name: 'BOOLEAN', category: 'Boolean', logical: 'boolean', minVersion: '23ai' },
+  { name: 'CHAR', category: 'Text', logical: 'char', length: len(1, 2000, 1) },
+  { name: 'VARCHAR2', category: 'Text', logical: 'varchar', length: len(1, 4000, 255, { required: true }), aliases: ['VARCHAR'], note: '32767 with MAX_STRING_SIZE=EXTENDED' },
+  { name: 'NCHAR', category: 'Text', logical: 'char', length: len(1, 1000, 1) },
+  { name: 'NVARCHAR2', category: 'Text', logical: 'varchar', length: len(1, 2000, 255, { required: true }) },
+  { name: 'CLOB', category: 'Text', logical: 'text', aliases: ['NCLOB'] },
+  { name: 'DATE', category: 'Date & time', logical: 'timestamp', note: 'date and time to the second' },
+  { name: 'TIMESTAMP', category: 'Date & time', logical: 'timestamp' },
+  { name: 'TIMESTAMP WITH TIME ZONE', category: 'Date & time', logical: 'timestamptz' },
+  { name: 'JSON', category: 'Other', logical: 'json', minVersion: '21c' },
+  { name: 'RAW', category: 'Binary', logical: 'binary', length: len(1, 2000, 16, { required: true }) },
+  { name: 'BLOB', category: 'Binary', logical: 'binary' },
+];
+
+export const oracle: Dialect = {
+  id: 'oracle',
+  displayName: 'Oracle',
+  versions: ['19c', '21c', '23ai'],
+  defaultVersion: '23ai',
+  identifiers: { maxLength: 128, unit: 'bytes', caseFolding: 'upper', quote: dq, reservedWords: ORACLE_RESERVED },
+  types: oraTypes,
+  // Oracle has no ON UPDATE actions and no RESTRICT / SET DEFAULT on delete.
+  capabilities: { identitySyntax: 'GENERATED BY DEFAULT AS IDENTITY', singleIdentity: true, identityMustBeKey: false, identityRowidOnly: false, checkConstraints: true, schemas: true, alterAddForeignKey: true, onDelete: ['no_action', 'cascade', 'set_null'], onUpdate: ['no_action'] },
+  mapLogical: (logical, src, version) => {
+    const desc = (n: string) => typeNamed(oraTypes, n);
+    const intOf = (p: number): TypeMapping => ({ type: { name: 'NUMBER', precision: p, scale: 0, logical } });
+    switch (logical) {
+      case 'smallint': return intOf(5);
+      case 'integer': return intOf(10);
+      case 'bigint': return intOf(19);
+      case 'decimal': return carry(desc('NUMBER'), src ?? { name: 'NUMBER', precision: 12, scale: 2 });
+      case 'real': return carry(desc('BINARY_FLOAT'), src);
+      case 'double': return carry(desc('BINARY_DOUBLE'), src);
+      case 'boolean': return versionAtLeast(oracle, version, '23ai') ? carry(desc('BOOLEAN'), src) : { ...intOf(1), lossy: 'BOOLEAN needs Oracle 23ai; stored as NUMBER(1) (0/1)' };
+      case 'varchar': {
+        const want = src?.max ? Infinity : src?.length ?? 255;
+        return want > 4000 ? { ...carry(desc('CLOB'), undefined), lossy: `length ${Number.isFinite(want) ? want : 'MAX'} exceeds VARCHAR2(4000); stored as CLOB` } : carry(desc('VARCHAR2'), src);
+      }
+      case 'char': return carry(desc('CHAR'), src);
+      case 'text': return carry(desc('CLOB'), src);
+      case 'date': return { ...carry(desc('DATE'), src), lossy: 'Oracle DATE also stores a time of day' };
+      case 'time': return { ...carry(desc('TIMESTAMP'), src), lossy: 'Oracle has no TIME type; stored as TIMESTAMP' };
+      case 'timestamp': return carry(desc('TIMESTAMP'), src);
+      case 'timestamptz': return carry(desc('TIMESTAMP WITH TIME ZONE'), src);
+      case 'uuid': return { ...carry(desc('RAW'), { name: 'RAW', length: 16 }), lossy: 'no UUID type; stored as RAW(16)' };
+      case 'json': return versionAtLeast(oracle, version, '21c') ? carry(desc('JSON'), src) : { ...carry(desc('CLOB'), undefined), lossy: 'JSON type needs Oracle 21c; stored as CLOB' };
+      case 'binary': return carry(desc('BLOB'), src);
+    }
+  },
+  toLogical: (t) => {
+    if (/^number$/i.test(t.name)) {
+      if (t.precision == null) return 'decimal';
+      // Matches mapLogical: smallint → NUMBER(5), integer → NUMBER(10), bigint → NUMBER(19).
+      if ((t.scale ?? 0) === 0) return t.precision <= 5 ? 'smallint' : t.precision <= 10 ? 'integer' : t.precision <= 19 ? 'bigint' : 'decimal';
+      return 'decimal';
+    }
+    if (/^(integer|int|smallint)$/i.test(t.name)) return 'integer';
+    return byDescriptor(() => oraTypes)(t);
+  },
+};
+
+/* ======================= SQLite ======================= */
+
+const liteTypes: TypeDescriptor[] = [
+  { name: 'INTEGER', category: 'Numeric', logical: 'bigint', aliases: ['INT', 'BIGINT', 'SMALLINT', 'TINYINT'], note: 'INTEGER affinity' },
+  { name: 'REAL', category: 'Numeric', logical: 'double', aliases: ['DOUBLE', 'FLOAT'], note: 'REAL affinity' },
+  { name: 'NUMERIC', category: 'Numeric', logical: 'decimal', aliases: ['DECIMAL', 'BOOLEAN'], note: 'NUMERIC affinity' },
+  { name: 'TEXT', category: 'Text', logical: 'text', aliases: ['VARCHAR', 'CHAR', 'CLOB'], note: 'TEXT affinity' },
+  { name: 'BLOB', category: 'Binary', logical: 'binary', note: 'BLOB affinity' },
+];
+
+export const sqlite: Dialect = {
+  id: 'sqlite',
+  displayName: 'SQLite',
+  versions: ['3'],
+  defaultVersion: '3',
+  identifiers: { maxLength: null, unit: 'chars', caseFolding: 'none', quote: dq, reservedWords: SQLITE_RESERVED },
+  types: liteTypes,
+  capabilities: { identitySyntax: 'INTEGER PRIMARY KEY AUTOINCREMENT', singleIdentity: true, identityMustBeKey: false, identityRowidOnly: true, checkConstraints: true, schemas: false, alterAddForeignKey: false, onDelete: ALL_ACTIONS, onUpdate: ALL_ACTIONS },
+  mapLogical: mapper(() => liteTypes, {
+    smallint: { name: 'INTEGER' }, integer: { name: 'INTEGER' }, bigint: { name: 'INTEGER' }, decimal: { name: 'NUMERIC' },
+    real: { name: 'REAL' }, double: { name: 'REAL' }, boolean: { name: 'INTEGER' },
+    varchar: { name: 'TEXT', lossy: 'SQLite does not enforce the length' }, char: { name: 'TEXT', lossy: 'SQLite does not enforce the length' }, text: { name: 'TEXT' },
+    date: { name: 'TEXT', lossy: 'no date type; stored as ISO-8601 text' }, time: { name: 'TEXT', lossy: 'no time type; stored as ISO-8601 text' },
+    timestamp: { name: 'TEXT', lossy: 'no timestamp type; stored as ISO-8601 text' }, timestamptz: { name: 'TEXT', lossy: 'no timestamp type; stored as ISO-8601 text with offset' },
+    uuid: { name: 'TEXT' }, json: { name: 'TEXT' }, binary: { name: 'BLOB' },
+  }),
+  // SQLite types are coarse (TEXT holds varchar, date, uuid…), so keep the stored logical type when it still maps to this
+  // physical type: PostgreSQL → SQLite → PostgreSQL then round-trips varchar/date/uuid columns.
+  toLogical: (t) => (t.logical && sqlite.mapLogical(t.logical, undefined, undefined).type.name === t.name.toUpperCase() ? t.logical : byDescriptor(() => liteTypes)(t)),
+};
+
+export const DIALECTS: Record<Dialect['id'], Dialect> = { generic, postgresql, mysql, sqlserver, oracle, sqlite };
+
+// Mapped types remember the logical type they were made from, so coarse engines (SQLite TEXT for varchar, date, uuid…)
+// convert back losslessly.
+for (const d of Object.values(DIALECTS)) {
+  const base = d.mapLogical;
+  d.mapLogical = (logical, src, version) => { const m = base(logical, src, version); m.type.logical = logical; return m; };
+}
+export const ENGINE_ORDER: Dialect['id'][] = ['postgresql', 'mysql', 'sqlserver', 'oracle', 'sqlite', 'generic'];
+
+export function getDialect(id: Dialect['id']): Dialect {
+  return DIALECTS[id] ?? generic;
+}
+
+/** "PostgreSQL 16", "Generic (logical types)" */
+export function targetLabel(target: { engine: Dialect['id']; version?: string }): string {
+  const d = getDialect(target.engine);
+  return d.versions.length ? `${d.displayName} ${target.version ?? d.defaultVersion ?? ''}`.trim() : d.displayName;
+}

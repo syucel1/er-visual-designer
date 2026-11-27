@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import type { ConversionPlan } from '@erd/dialects';
+import type { Issue, ValidationResult } from '@erd/validation';
 import {
   CommandError, createEmptyProject, dispatch as dispatchCommand, emptyHistory, redo as redoHistory, undo as undoHistory,
   type Command, type History, type Id, type Project, type Viewport,
@@ -32,6 +34,17 @@ export interface DialogSpec {
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
+export interface ValidationState {
+  issues: Issue[];
+  counts: { error: number; warning: number; info: number };
+  ms: number;
+  mode: 'full' | 'incremental';
+  /** Issues grouped by table id (column/relationship issues included under their table). */
+  byTable: Map<string, Issue[]>;
+}
+
+const EMPTY_VALIDATION: ValidationState = { issues: [], counts: { error: 0, warning: 0, info: 0 }, ms: 0, mode: 'full', byTable: new Map() };
+
 interface State {
   project: Project;
   history: History;
@@ -44,6 +57,11 @@ interface State {
   /** Incremented when the canvas should fit/center (e.g. after loading a project). */
   fitRequest: number;
   focusRequest: { id: Id; n: number } | null;
+  validation: ValidationState;
+  /** Pending engine conversion awaiting review. */
+  conversion: ConversionPlan | null;
+  newProjectOpen: boolean;
+  problemsOpen: boolean;
 
   /** Executes a command through the history. Returns false (and shows a toast) if it was rejected. */
   dispatch: (command: Command, opts?: { coalesceKey?: string; silent?: boolean }) => boolean;
@@ -62,6 +80,10 @@ interface State {
   setSaveState: (s: SaveState) => void;
   requestFit: () => void;
   requestFocus: (id: Id) => void;
+  setValidation: (r: ValidationResult) => void;
+  setConversion: (plan: ConversionPlan | null) => void;
+  setNewProjectOpen: (open: boolean) => void;
+  setProblemsOpen: (open: boolean) => void;
 }
 
 const sameIds = (a: Id[], b: Id[]) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -87,6 +109,10 @@ export const useStore = create<State>((set, get) => ({
   saveState: 'idle',
   fitRequest: 0,
   focusRequest: null,
+  validation: EMPTY_VALIDATION,
+  conversion: null,
+  newProjectOpen: false,
+  problemsOpen: false,
 
   dispatch: (command, opts = {}) => {
     try {
@@ -147,6 +173,14 @@ export const useStore = create<State>((set, get) => ({
   setSaveState: (saveState) => set({ saveState }),
   requestFit: () => set((s) => ({ fitRequest: s.fitRequest + 1 })),
   requestFocus: (id) => set((s) => ({ focusRequest: { id, n: (s.focusRequest?.n ?? 0) + 1 } })),
+  setValidation: (r) => {
+    const byTable = new Map<string, Issue[]>();
+    for (const i of r.issues) if (i.target.tableId) byTable.set(i.target.tableId, [...(byTable.get(i.target.tableId) ?? []), i]);
+    set({ validation: { issues: r.issues, counts: r.counts, ms: r.ms, mode: r.mode, byTable } });
+  },
+  setConversion: (conversion) => set({ conversion }),
+  setNewProjectOpen: (newProjectOpen) => set({ newProjectOpen }),
+  setProblemsOpen: (problemsOpen) => set({ problemsOpen }),
 }));
 
 /** Selectors */

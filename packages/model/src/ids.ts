@@ -1,6 +1,7 @@
 /**
  * Sortable unique IDs (ULID-style: 48-bit time + 80 bits of randomness, Crockford base32).
- * Prefixed by element kind for readability in files and logs: t_ table, c_ column, r_ relationship, p_ project.
+ * Prefixed by element kind for readability in files and logs: t_ table, c_ column, r_ relationship, p_ project,
+ * u_ unique constraint, k_ check constraint, i_ index.
  */
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -25,4 +26,5 @@ export function ulid(now = Date.now()): string {
   return time + rand;
 }
 
-export const newId = (prefix: 't' | 'c' | 'r' | 'p') => `${prefix}_${ulid()}`;
+/** u_ unique constraint, k_ check constraint, i_ index. */
+export const newId = (prefix: 't' | 'c' | 'r' | 'p' | 'u' | 'k' | 'i') => `${prefix}_${ulid()}`;

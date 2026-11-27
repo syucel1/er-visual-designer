@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { addColumnCommand, formatType, type Id, type Table } from '@erd/model';
 import { useStore } from '../store/store';
+import { currentTarget } from '../lib/dialect';
 
 export type TableNodeData = {
   table: Table;
@@ -28,7 +29,7 @@ function TableNodeImpl({ id, data }: NodeProps<TableNodeType>) {
   };
   const addColumn = () => {
     const s = useStore.getState();
-    const { command, column } = addColumnCommand(s.project, id);
+    const { command, column } = addColumnCommand(s.project, id, undefined, currentTarget().defaults);
     if (s.dispatch(command)) { s.select({ tables: [id], focusColumn: column.id }); setEditing(column.id); }
   };
 
