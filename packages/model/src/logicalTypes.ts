@@ -51,28 +51,28 @@ export function isLogicalType(name: unknown): name is LogicalTypeName {
 /** A type with its default parameters filled in, e.g. varchar → varchar(255). */
 export function defaultDataType(name: LogicalTypeName): DataType {
   const t = typeInfo(name);
-  if (t.param === 'length') return { name, length: t.defaultLength };
-  if (t.param === 'precision') return { name, precision: t.defaultPrecision, scale: t.defaultScale };
-  return { name };
+  if (t.param === 'length') return { name, length: t.defaultLength, logical: name };
+  if (t.param === 'precision') return { name, precision: t.defaultPrecision, scale: t.defaultScale, logical: name };
+  return { name, logical: name };
 }
 
 /** Re-applies parameters when the type changes, keeping compatible ones. */
 export function changeType(current: DataType, name: LogicalTypeName): DataType {
   const t = typeInfo(name);
-  if (t.param === 'length') return { name, length: current.length ?? t.defaultLength };
-  if (t.param === 'precision') return { name, precision: current.precision ?? t.defaultPrecision, scale: current.scale ?? t.defaultScale };
-  return { name };
+  if (t.param === 'length') return { name, length: current.length ?? t.defaultLength, logical: name };
+  if (t.param === 'precision') return { name, precision: current.precision ?? t.defaultPrecision, scale: current.scale ?? t.defaultScale, logical: name };
+  return { name, logical: name };
 }
 
-/** Short display form used on table cards, e.g. varchar(255), decimal(12,2). */
+/** Display / DDL form of a type, e.g. varchar(255), NVARCHAR(MAX), decimal(12,2). Engine-independent: parameters are only stored when the type takes them. */
 export function formatType(t: DataType): string {
-  const info = BY_NAME.get(t.name);
-  if (!info) return t.name;
-  if (info.param === 'length' && t.length != null) return `${t.name}(${t.length})`;
-  if (info.param === 'precision' && t.precision != null) return t.scale != null ? `${t.name}(${t.precision},${t.scale})` : `${t.name}(${t.precision})`;
-  return t.name === 'timestamptz' ? 'timestamptz' : t.name;
+  if (t.max) return `${t.name}(MAX)`;
+  if (t.length != null) return `${t.name}(${t.length})`;
+  if (t.precision != null) return t.scale != null ? `${t.name}(${t.precision},${t.scale})` : `${t.name}(${t.precision})`;
+  return t.name;
 }
 
+/** Same physical type and parameters (type names compare case-insensitively). */
 export function sameType(a: DataType, b: DataType): boolean {
-  return a.name === b.name && (a.length ?? null) === (b.length ?? null) && (a.precision ?? null) === (b.precision ?? null) && (a.scale ?? null) === (b.scale ?? null);
+  return a.name.toLowerCase() === b.name.toLowerCase() && !!a.max === !!b.max && (a.length ?? null) === (b.length ?? null) && (a.precision ?? null) === (b.precision ?? null) && (a.scale ?? null) === (b.scale ?? null);
 }

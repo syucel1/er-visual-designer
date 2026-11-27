@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { useStore } from './store/store';
 import { loadAutosave, startAutosave } from './store/persistence';
+import { startValidation } from './validation/client';
 import { useKeyboard } from './lib/useKeyboard';
 import { useActions } from './lib/actions';
 import { TopBar } from './components/TopBar';
@@ -9,6 +10,7 @@ import { LeftPanel } from './components/LeftPanel';
 import { Canvas } from './components/Canvas';
 import { Inspector } from './components/inspector/Inspector';
 import { ConfirmDialog, Toasts } from './components/Overlays';
+import { ConversionDialog, NewProjectDialog, StatusBar } from './components/EngineUi';
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -17,7 +19,9 @@ export function App() {
     loadAutosave().then((saved) => {
       if (saved && saved.project.model.tables.length) useStore.getState().loadProject(saved.project, 'Restored your last session');
       else if (saved) useStore.getState().loadProject(saved.project);
-      stop = startAutosave();
+      const stopSave = startAutosave();
+      const stopValidation = startValidation();
+      stop = () => { stopSave(); stopValidation(); };
       setReady(true);
     });
     return () => stop?.();
@@ -48,8 +52,9 @@ function Workspace() {
       <TopBar />
       <div className="main">
         <LeftPanel />
-        <main className="relative min-w-0 min-h-0" aria-label="Diagram canvas">
-          <Canvas />
+        <main className="relative min-w-0 min-h-0 flex flex-col" aria-label="Diagram canvas">
+          <div className="relative flex-1 min-h-0"><Canvas /></div>
+          <StatusBar />
           <button className="only-sm fixed right-4 bottom-20 w-12 h-12 rounded-full text-white text-2xl grid place-items-center z-20" style={{ background: 'var(--grad-accent)', boxShadow: '0 8px 20px -8px rgba(214,36,110,.6)' }}
             onClick={a.addTable} aria-label="Add table">＋</button>
         </main>
@@ -57,6 +62,8 @@ function Workspace() {
       </div>
       <div className="scrim" onClick={() => { useStore.getState().setLeftOpen(false); useStore.getState().select(null); }} />
       <ConfirmDialog />
+      <ConversionDialog />
+      <NewProjectDialog />
       <Toasts />
     </div>
   );

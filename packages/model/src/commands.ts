@@ -1,5 +1,7 @@
 import { produceWithPatches, enablePatches, type Draft, type Patch } from 'immer';
-import type { Column, Id, Point, Project, Relationship, Table } from './types';
+import type { CheckConstraint, Column, EngineTarget, Id, Index, Point, Project, Relationship, Table, TableItemKind, UniqueConstraint } from './types';
+
+type TableItem = UniqueConstraint | CheckConstraint | Index;
 
 enablePatches();
 
@@ -10,6 +12,7 @@ enablePatches();
  */
 export type Command =
   | { type: 'renameProject'; name: string }
+  | { type: 'setTarget'; target: EngineTarget }
   | { type: 'addTable'; table: Table; position: Point }
   | { type: 'removeTables'; tableIds: Id[] }
   | { type: 'updateTable'; tableId: Id; patch: Partial<Pick<Table, 'name' | 'schema' | 'comment' | 'color'>> }
@@ -22,6 +25,9 @@ export type Command =
   | { type: 'updateRelationship'; relationshipId: Id; patch: Partial<Pick<Relationship, 'name' | 'onDelete' | 'onUpdate' | 'columns'>> }
   | { type: 'removeRelationships'; relationshipIds: Id[] }
   | { type: 'moveTables'; moves: { tableId: Id; to: Point }[] }
+  | { type: 'addTableItem'; tableId: Id; kind: TableItemKind; item: TableItem }
+  | { type: 'updateTableItem'; tableId: Id; kind: TableItemKind; itemId: Id; patch: Record<string, unknown> }
+  | { type: 'removeTableItem'; tableId: Id; kind: TableItemKind; itemId: Id }
   | { type: 'batch'; label: string; commands: Command[] };
 
 export class CommandError extends Error {
@@ -47,6 +53,7 @@ export function describe(command: Command, project?: Project): string {
   const tname = (id: Id) => project?.model.tables.find((t) => t.id === id)?.name ?? 'table';
   switch (command.type) {
     case 'renameProject': return 'Rename project';
+    case 'setTarget': return `Change target to ${command.target.engine}${command.target.version ? ' ' + command.target.version : ''}`;
     case 'addTable': return `Add table ${command.table.name}`;
     case 'removeTables': return command.tableIds.length === 1 ? `Delete table ${tname(command.tableIds[0]!)}` : `Delete ${command.tableIds.length} tables`;
     case 'updateTable': return `Edit table ${tname(command.tableId)}`;
@@ -59,9 +66,14 @@ export function describe(command: Command, project?: Project): string {
     case 'updateRelationship': return 'Edit relationship';
     case 'removeRelationships': return command.relationshipIds.length === 1 ? 'Delete relationship' : `Delete ${command.relationshipIds.length} relationships`;
     case 'moveTables': return command.moves.length === 1 ? 'Move table' : `Move ${command.moves.length} tables`;
+    case 'addTableItem': return `Add ${ITEM_LABEL[command.kind]}`;
+    case 'updateTableItem': return `Edit ${ITEM_LABEL[command.kind]}`;
+    case 'removeTableItem': return `Delete ${ITEM_LABEL[command.kind]}`;
     case 'batch': return command.label;
   }
 }
+
+const ITEM_LABEL: Record<TableItemKind, string> = { uniques: 'unique constraint', checks: 'check constraint', indexes: 'index' };
 
 /* ------------------------------------------------------------------ */
 
@@ -77,6 +89,10 @@ function column(t: Draft<Table>, id: Id): Draft<Column> {
   const c = t.columns.find((x) => x.id === id);
   if (!c) throw new CommandError(`Column ${id} does not exist in table ${t.name}`);
   return c;
+}
+
+function checkItemColumns(t: Draft<Table>, item: TableItem) {
+  if ('columnIds' in item) for (const id of item.columnIds) column(t, id);
 }
 
 function checkRelationship(d: D, r: Relationship, ignoreId?: Id) {
@@ -98,6 +114,11 @@ function apply(d: D, c: Command): void {
   switch (c.type) {
     case 'renameProject':
       d.name = c.name;
+      return;
+
+    case 'setTarget':
+      d.target = { ...c.target };
+      if (!c.target.version) delete d.target.version;
       return;
 
     case 'addTable': {
@@ -144,6 +165,14 @@ function apply(d: D, c: Command): void {
       if (t.primaryKey) {
         t.primaryKey.columnIds = t.primaryKey.columnIds.filter((id) => id !== c.columnId);
         if (!t.primaryKey.columnIds.length) delete t.primaryKey;
+      }
+      // Drop the column from unique constraints and indexes; drop those left without columns.
+      for (const k of ['uniques', 'indexes'] as const) {
+        const list = t[k];
+        if (!list) continue;
+        for (const item of list) item.columnIds = item.columnIds.filter((id) => id !== c.columnId);
+        const kept = list.filter((item) => item.columnIds.length > 0);
+        if (kept.length) t[k] = kept; else delete t[k];
       }
       // Drop the column from any relationship; relationships left without pairs are removed.
       for (const r of d.model.relationships) r.columns = r.columns.filter((p) => p.child !== c.columnId && p.parent !== c.columnId);
@@ -200,6 +229,37 @@ function apply(d: D, c: Command): void {
         d.layout.positions[m.tableId] = { x: Math.round(m.to.x), y: Math.round(m.to.y) };
       }
       return;
+
+    case 'addTableItem': {
+      const t = table(d, c.tableId);
+      const list = (t[c.kind] ??= []) as TableItem[];
+      if (list.some((x) => x.id === c.item.id)) throw new CommandError(`${ITEM_LABEL[c.kind]} id ${c.item.id} already exists`);
+      checkItemColumns(t, c.item);
+      list.push(structuredClone(c.item));
+      return;
+    }
+
+    case 'updateTableItem': {
+      const t = table(d, c.tableId);
+      const item = (t[c.kind] as TableItem[] | undefined)?.find((x) => x.id === c.itemId);
+      if (!item) throw new CommandError(`${ITEM_LABEL[c.kind]} ${c.itemId} does not exist`);
+      checkItemColumns(t, { ...(JSON.parse(JSON.stringify(item)) as TableItem), ...c.patch } as TableItem);
+      for (const [k, v] of Object.entries(c.patch)) {
+        if (k === 'id') continue;
+        if (v === undefined) delete (item as unknown as Record<string, unknown>)[k];
+        else (item as unknown as Record<string, unknown>)[k] = structuredClone(v);
+      }
+      return;
+    }
+
+    case 'removeTableItem': {
+      const t = table(d, c.tableId);
+      const list = t[c.kind] as TableItem[] | undefined;
+      if (!list?.some((x) => x.id === c.itemId)) throw new CommandError(`${ITEM_LABEL[c.kind]} ${c.itemId} does not exist`);
+      (t as Record<string, unknown>)[c.kind] = list.filter((x) => x.id !== c.itemId);
+      if (!(t[c.kind] as TableItem[]).length) delete t[c.kind];
+      return;
+    }
 
     case 'batch':
       for (const sub of c.commands) apply(d, sub);

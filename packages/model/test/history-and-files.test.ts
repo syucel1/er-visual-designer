@@ -108,7 +108,39 @@ describe('project file format', () => {
     expect(() => parseProject('{nope')).toThrow(ProjectFormatError);
     expect(() => parseProject({})).toThrow(/formatVersion/);
     expect(() => parseProject({ formatVersion: FORMAT_VERSION + 1, model: { tables: [] } })).toThrow(/newer version/);
-    expect(() => parseProject({ formatVersion: 1, model: { tables: [{ id: 't', name: 'x', columns: [{ id: 'c', name: 'a', type: { name: 'nvarchar2' } }] }] } })).toThrow(/unknown type/);
+    expect(() => parseProject({ formatVersion: 2, model: { tables: [{ id: 't', name: 'x', columns: [{ id: 'c', name: 'a', type: {} }] }] } })).toThrow(/no type name/);
+  });
+
+  it('keeps unknown engine types (validation reports them) and the target engine', () => {
+    const { project } = parseProject({ formatVersion: 2, target: { engine: 'oracle', version: '19c' }, model: { tables: [{ id: 't', name: 'x', columns: [{ id: 'c', name: 'a', type: { name: 'NVARCHAR2', length: 50, logical: 'varchar' } }] }] } });
+    expect(project.target).toEqual({ engine: 'oracle', version: '19c' });
+    expect(project.model.tables[0]!.columns[0]!.type).toEqual({ name: 'NVARCHAR2', length: 50, logical: 'varchar' });
+  });
+
+  it('migrates format 1 files (Phase 1) to format 2', () => {
+    const v1 = JSON.parse(serializeProject(createSampleProject()));
+    v1.formatVersion = 1;
+    delete v1.target;
+    for (const t of v1.model.tables) for (const c of t.columns) delete c.type.logical;
+    const { project, warnings } = parseProject(v1);
+    expect(warnings).toEqual([]);
+    expect(project.formatVersion).toBe(2);
+    expect(project.target).toEqual({ engine: 'generic' });
+    expect(project.model.tables.every((t) => t.columns.every((c) => c.type.logical === c.type.name))).toBe(true);
+  });
+
+  it('round-trips constraints and indexes, dropping references to missing columns', () => {
+    const p = JSON.parse(serializeProject(createSampleProject()));
+    const t = p.model.tables[0];
+    t.uniques = [{ id: 'u_1', columnIds: [t.columns[1].id] }, { id: 'u_2', columnIds: ['gone'] }];
+    t.checks = [{ id: 'k_1', name: 'ck_x', expression: 'id > 0' }];
+    t.indexes = [{ id: 'i_1', columnIds: [t.columns[2].id, 'gone'], unique: true }];
+    const { project, warnings } = parseProject(p);
+    const out = project.model.tables[0]!;
+    expect(out.uniques).toEqual([{ id: 'u_1', columnIds: [t.columns[1].id] }]);
+    expect(out.checks).toEqual([{ id: 'k_1', name: 'ck_x', expression: 'id > 0' }]);
+    expect(out.indexes).toEqual([{ id: 'i_1', columnIds: [t.columns[2].id], unique: true }]);
+    expect(warnings).toHaveLength(1);
   });
 
   it('repairs dangling references and missing positions with warnings', () => {

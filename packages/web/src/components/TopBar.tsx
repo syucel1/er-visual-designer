@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { canRedo, canUndo } from '@erd/model';
 import { useStore } from '../store/store';
 import { useActions } from '../lib/actions';
+import { TopBarEngine } from './EngineUi';
 
 export function TopBar() {
   const name = useStore((s) => s.project.name);
@@ -37,12 +38,7 @@ export function TopBar() {
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         style={{ width: `${Math.max(8, name.length + 2)}ch` }}
       />
-      <label className="tb-btn hide-md" title="Engine-specific types and rules arrive in Phase 2">
-        <span className="w-2 h-2 rounded-full bg-white/90" aria-hidden />
-        <select disabled className="bg-transparent text-white font-semibold outline-none" aria-label="Target database">
-          <option>Generic (logical types)</option>
-        </select>
-      </label>
+      <TopBarEngine />
       <div className="flex items-center gap-1">
         <button className="tb-btn !px-2" onClick={() => useStore.getState().undo()} disabled={!canUndo(history)} title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
         <button className="tb-btn !px-2 hide-sm" onClick={() => useStore.getState().redo()} disabled={!canRedo(history)} title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
@@ -61,7 +57,7 @@ export function TopBar() {
         <button className="tb-btn tb-primary" onClick={() => setMenu((m) => !m)} aria-haspopup="menu" aria-expanded={menu}>File ▾</button>
         {menu && (
           <div className="menu" role="menu">
-            {item('New project', '', a.newProject)}
+            {item('New project…', '', a.newProject)}
             {item('Open .erd.json…', 'Ctrl+O', a.openFile)}
             {item('Save as .erd.json', 'Ctrl+S', a.saveFile)}
             <div className="h-px bg-line my-1" />

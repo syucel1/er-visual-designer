@@ -1,0 +1,14 @@
+{
+  "name": "@erd/validation",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Engine-aware validation rules with quick fixes for ER Visual Designer",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@erd/dialects": "0.2.0",
+    "@erd/model": "0.1.0"
+  }
+}

@@ -1,22 +1,22 @@
 import { isLogicalType } from './logicalTypes';
 import { newId } from './ids';
-import type { Column, Project, Relationship, Table } from './types';
-import { TABLE_COLORS } from './types';
+import type { CheckConstraint, Column, DataType, EngineTarget, Index, Project, Relationship, Table, UniqueConstraint } from './types';
+import { ENGINE_IDS, TABLE_COLORS } from './types';
 
 /** Current `.erd.json` format version. Bump it together with a migration in MIGRATIONS. */
-export const FORMAT_VERSION = 1;
+export const FORMAT_VERSION = 2;
 export const FILE_EXTENSION = '.erd.json';
 
 export class ProjectFormatError extends Error {
   override name = 'ProjectFormatError';
 }
 
-export function createEmptyProject(name = 'untitled_schema'): Project {
+export function createEmptyProject(name = 'untitled_schema', target: EngineTarget = { engine: 'generic' }): Project {
   return {
     formatVersion: FORMAT_VERSION,
     id: newId('p'),
     name,
-    target: { engine: 'generic' },
+    target: { ...target },
     model: { tables: [], relationships: [] },
     layout: { positions: {} },
   };
@@ -28,9 +28,18 @@ export function serializeProject(project: Project): string {
 
 /**
  * Migrations from older format versions. MIGRATIONS[n] upgrades a version-n object to n+1.
- * Version 1 is the first released format, so there are none yet; the mechanism is in place for Phase 2+.
+ * v1 → v2 (Phase 2): types gain a `logical` name and the project an explicit engine. v1 files only held
+ * logical types, so every type's logical name is its own name and the engine is `generic`.
  */
-const MIGRATIONS: Record<number, (raw: Record<string, unknown>) => Record<string, unknown>> = {};
+const MIGRATIONS: Record<number, (raw: Record<string, unknown>) => Record<string, unknown>> = {
+  1: (raw) => {
+    const o = JSON.parse(JSON.stringify(raw)) as Record<string, any>;
+    for (const t of o.model?.tables ?? []) for (const c of t.columns ?? []) if (c?.type && typeof c.type.name === 'string' && !c.type.logical) c.type.logical = c.type.name;
+    o.target = { engine: 'generic' };
+    o.formatVersion = 2;
+    return o;
+  },
+};
 
 export interface ParseResult {
   project: Project;
@@ -82,12 +91,13 @@ function validate(o: Record<string, unknown>): ParseResult {
       if (columnOwner.has(cid)) fail(`Duplicate column id ${cid}.`);
       columnOwner.set(cid, id);
       const type = isObj(cc.type) ? cc.type : fail(`Column ${name}.${String(cc.name)} has no type.`);
-      const typeName = type.name;
-      if (!isLogicalType(typeName)) return fail(`Column ${name}.${String(cc.name)} has unknown type "${String(typeName)}".`);
+      const typeName = typeof type.name === 'string' && type.name.trim() ? type.name : fail(`Column ${name}.${String(cc.name)} has no type name.`);
+      // Unknown engine types are kept: validation reports them (E-TYP-001) instead of the file failing to open.
+      const dt: DataType = { name: typeName, ...num('length', type.length), ...(type.max === true ? { max: true } : {}), ...num('precision', type.precision), ...num('scale', type.scale), ...(isLogicalType(type.logical) ? { logical: type.logical } : {}) };
       const col: Column = {
         id: cid,
         name: typeof cc.name === 'string' ? cc.name : fail(`Column ${cid} has no name.`),
-        type: { name: typeName, ...num('length', type.length), ...num('precision', type.precision), ...num('scale', type.scale) },
+        type: dt,
         nullable: cc.nullable !== false,
       };
       if (isObj(cc.default) && typeof cc.default.value === 'string') col.default = { kind: cc.default.kind === 'expression' ? 'expression' : 'literal', value: cc.default.value };
@@ -103,6 +113,24 @@ function validate(o: Record<string, unknown>): ParseResult {
       ...(typeof tt.color === 'string' && (TABLE_COLORS as readonly string[]).includes(tt.color) ? { color: tt.color as Table['color'] } : {}),
       columns,
     };
+    const colIds = new Set(columns.map((c) => c.id));
+    const items = <T extends { id: string }>(key: 'uniques' | 'checks' | 'indexes', build: (o: Record<string, unknown>) => T | null): T[] | undefined => {
+      if (!Array.isArray(tt[key])) return undefined;
+      const out: T[] = [];
+      for (const raw of tt[key] as unknown[]) {
+        const item = isObj(raw) && str(raw.id) ? build(raw) : null;
+        if (item) out.push(item); else warnings.push(`${name}: ignored an invalid ${key.slice(0, -1)}.`);
+      }
+      return out.length ? out : undefined;
+    };
+    const pickCols = (o: Record<string, unknown>) => (Array.isArray(o.columnIds) ? (o.columnIds as unknown[]).filter((x): x is string => typeof x === 'string' && colIds.has(x)) : []);
+    const named = (o: Record<string, unknown>) => (typeof o.name === 'string' && o.name ? { name: o.name } : {});
+    const uniques = items<UniqueConstraint>('uniques', (o) => { const c = pickCols(o); return c.length ? { id: str(o.id), ...named(o), columnIds: c } : null; });
+    const checks = items<CheckConstraint>('checks', (o) => (typeof o.expression === 'string' ? { id: str(o.id), ...named(o), expression: o.expression } : null));
+    const indexes = items<Index>('indexes', (o) => { const c = pickCols(o); return c.length ? { id: str(o.id), ...named(o), columnIds: c, ...(o.unique === true ? { unique: true } : {}) } : null; });
+    if (uniques) table.uniques = uniques;
+    if (checks) table.checks = checks;
+    if (indexes) table.indexes = indexes;
     if (isObj(tt.primaryKey) && Array.isArray(tt.primaryKey.columnIds)) {
       const ids = (tt.primaryKey.columnIds as unknown[]).filter((x): x is string => typeof x === 'string');
       const valid = ids.filter((x) => columns.some((c) => c.id === x));
@@ -144,11 +172,17 @@ function validate(o: Record<string, unknown>): ParseResult {
     formatVersion: FORMAT_VERSION,
     id: str(o.id) || newId('p'),
     name: typeof o.name === 'string' && o.name ? o.name : 'untitled_schema',
-    target: { engine: 'generic' },
+    target: parseTarget(o.target, warnings),
     model: { tables, relationships },
     layout: { positions, ...(isObj(vp) && typeof vp.x === 'number' && typeof vp.y === 'number' && typeof vp.zoom === 'number' ? { viewport: { x: vp.x, y: vp.y, zoom: vp.zoom } } : {}) },
   };
   return { project, warnings };
+}
+
+function parseTarget(v: unknown, warnings: string[]): EngineTarget {
+  if (!isObj(v)) return { engine: 'generic' };
+  if (!ENGINE_IDS.includes(v.engine as EngineTarget['engine'])) { warnings.push(`Unknown target engine "${String(v.engine)}"; using generic.`); return { engine: 'generic' }; }
+  return { engine: v.engine as EngineTarget['engine'], ...(typeof v.version === 'string' && v.version ? { version: v.version } : {}) };
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
